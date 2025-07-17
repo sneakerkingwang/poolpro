@@ -1,7 +1,7 @@
 {
-  "homepage": "https://sneakerkingwang.github.io/poolpro",
+  "homepage": "https://sneakerkingwang.github.io/poolpro2",
   "name": "vite-react-typescript-starter",
-  "private": false,
+  "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
