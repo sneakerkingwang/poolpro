@@ -121,7 +121,31 @@ const Teams: React.FC<TeamsProps> = ({ teams, players, isAdmin, addTeam }) => {
             )
         })}
       </div>
-      {/* ... Modals ... */}
+      {showCreateTeamModal && isAdmin && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900">Create New Team</h3>
+                    <button onClick={() => setShowCreateTeamModal(false)} className="text-gray-400 hover:text-gray-600"><Plus className="w-5 h-5 rotate-45" /></button>
+                </div>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Team Name</label>
+                        <input type="text" value={newTeamName} onChange={(e) => setNewTeamName(e.target.value)} placeholder="Enter team name" className="w-full px-3 py-2 border border-gray-300 rounded-lg"/>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Captain's Name</label>
+                        <input type="text" value={newCaptainName} onChange={(e) => setNewCaptainName(e.target.value)} placeholder="Enter captain's name" className="w-full px-3 py-2 border border-gray-300 rounded-lg"/>
+                    </div>
+                    {formError && <div className="text-red-600 text-sm bg-red-50 p-2 rounded-lg">{formError}</div>}
+                    <div className="flex space-x-3 pt-4">
+                        <button onClick={() => setShowCreateTeamModal(false)} className="flex-1 btn bg-gray-200 hover:bg-gray-300">Cancel</button>
+                        <button onClick={handleCreateTeamSubmit} className="flex-1 btn btn-primary">Create Team</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+      )}
     </>
   );
 };
