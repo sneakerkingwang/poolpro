@@ -85,13 +85,13 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onClose, onLoginSuccess }) => {
             </div>
           )}
 
-          <div className="bg-blue-50 p-3 rounded-lg">
+          {/* <div className="bg-blue-50 p-3 rounded-lg">
             <p className="text-sm text-blue-800">
               <strong>Demo Credentials:</strong><br />
               Username: admin<br />
               Password: admin123
             </p>
-          </div>
+          </div> */}
 
           <div className="flex space-x-3 pt-4">
             <button
