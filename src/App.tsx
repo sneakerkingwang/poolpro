@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Trophy, Users, Target, BarChart3, Award, Settings, LogIn, LogOut, Shield, TrendingUp } from 'lucide-react';
 import { auth } from './firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
@@ -22,11 +22,9 @@ function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
-
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
-  const [openMatchModalOnLoad, setOpenModalOnLoad] = useState(false);
-  // This state now correctly holds only the ID of the active match
+  const [openMatchModalOnLoad, setOpenMatchModalOnLoad] = useState(false);
   const [activeMatchId, setActiveMatchId] = useState<string | null>(null);
 
   // --- AUTHENTICATION ---
@@ -38,6 +36,8 @@ function App() {
     });
     return () => unsubscribe();
   }, []);
+  
+  const isLoggedIn = useMemo(() => !!currentUser, [currentUser]);
 
   // --- EVENT HANDLERS ---
   const handleSelectPlayer = (playerId: string) => {
@@ -50,7 +50,7 @@ function App() {
 
   const handleNewMatch = () => {
     setActiveTab('matches');
-    setOpenModalOnLoad(true);
+    setOpenMatchModalOnLoad(true);
   };
 
   const handleLoginClick = () => {
@@ -69,15 +69,13 @@ function App() {
     setShowAuthModal(false);
   };
 
-  // This handler now correctly accepts a matchId string
   const handleMatchStarted = (matchId: string) => {
     setActiveMatchId(matchId);
   };
 
   const handleFinalizeLiveScoring = () => {
     setActiveMatchId(null);
-    // After a match is finalized, we should probably go back to the matches tab
-    setActiveTab('matches');
+    setActiveTab('matches');
   };
 
   // --- RENDER LOGIC ---
@@ -96,17 +94,16 @@ function App() {
       case 'dashboard':
         return <Dashboard onNewMatch={handleNewMatch} onNavigate={setActiveTab} isAdmin={isAdmin} />;
       case 'teams':
-        // Note: The 'players' prop is temporarily passed as an empty array.
-        // A better solution would be to fetch players within Teams or use global state.
-        return <Teams isAdmin={isAdmin} players={[]} />;
+        return <Teams isAdmin={isAdmin} />;
       case 'players':
         return <Players isAdmin={isAdmin} onSelectPlayer={handleSelectPlayer} />;
       case 'matches':
         return (
           <Matches
             isAdmin={isAdmin}
+            isLoggedIn={isLoggedIn}
             openModalOnLoad={openMatchModalOnLoad}
-            setOpenModalOnLoad={setOpenModalOnLoad}
+            setOpenModalOnLoad={setOpenMatchModalOnLoad}
             onMatchStarted={handleMatchStarted}
           />
         );
@@ -191,7 +188,6 @@ function App() {
         </main>
       </div>
 
-      {/* This now correctly passes the ID to LiveScoring */}
       {activeMatchId && (
         <LiveScoring
           matchId={activeMatchId}
