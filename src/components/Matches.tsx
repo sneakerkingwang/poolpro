@@ -1,24 +1,26 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, Gamepad2, Target, CheckCircle } from 'lucide-react';
+import { Plus, Target, CheckCircle, Trash2 } from 'lucide-react';
 import { Match, Player, Tournament, Team } from '../types';
 import { getRaceToPoints } from '../utils/usapl';
+import { db } from '../firebase';
+import { collection, getDocs, addDoc, serverTimestamp, doc, deleteDoc } from 'firebase/firestore';
 
 interface MatchesProps {
-  isAdmin: boolean;
-  players: Player[];
-  teams: Team[];
-  matches: Match[];
-  tournaments: Tournament[];
-  startNewMatch: (matchSetup: Omit<Match, 'id' | 'status' | 'date' | 'time' | 'score' | 'games' | 'points1' | 'points2'>) => void;
-  addTournament: (tournament: Omit<Tournament, 'id' | 'players'>) => void;
-  openModalOnLoad: boolean;
-  setOpenModalOnLoad: (value: boolean) => void;
+  isAdmin: boolean;
+  // CHANGE: This prop should now correctly expect only the match ID (a string)
+  onMatchStarted: (matchId: string) => void;
+  openModalOnLoad: boolean;
+  setOpenModalOnLoad: (value: boolean) => void;
 }
 
-const Matches: React.FC<MatchesProps> = ({ isAdmin, players, teams, matches, startNewMatch, addTournament, openModalOnLoad, setOpenModalOnLoad }) => {
+const Matches: React.FC<MatchesProps> = ({ isAdmin, onMatchStarted, openModalOnLoad, setOpenModalOnLoad }) => {
+  const [loading, setLoading] = useState(true);
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [showSetupModal, setShowSetupModal] = useState(false);
   const [gameTypeFilter, setGameTypeFilter] = useState<'all' | '8-ball' | '9-ball'>('all');
-  
   const [gameType, setGameType] = useState<'8-ball' | '9-ball'>('8-ball');
   const [team1Id, setTeam1Id] = useState<string>('');
   const [team2Id, setTeam2Id] = useState<string>('');
@@ -27,20 +29,32 @@ const Matches: React.FC<MatchesProps> = ({ isAdmin, players, teams, matches, sta
   const [pointsToWin, setPointsToWin] = useState<[number, number] | null>(null);
   const [formError, setFormError] = useState('');
 
-  useEffect(() => {
-    if (openModalOnLoad) {
-      setShowSetupModal(true);
-      setOpenModalOnLoad(false);
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [matchesSnap, playersSnap, teamsSnap, tournamentsSnap] = await Promise.all([
+        getDocs(collection(db, "matches")),
+        getDocs(collection(db, "players")),
+        getDocs(collection(db, "teams")),
+        getDocs(collection(db, "tournaments"))
+      ]);
+      setMatches(matchesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Match[]);
+      setPlayers(playersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Player[]);
+      setTeams(teamsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Team[]);
+      setTournaments(tournamentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Tournament[]);
+    } catch (error) {
+      console.error("Failed to fetch data:", error);
     }
-  }, [openModalOnLoad, setOpenModalOnLoad]);
+    setLoading(false);
+  };
 
+  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { if (openModalOnLoad) { setShowSetupModal(true); setOpenModalOnLoad(false); } }, [openModalOnLoad, setOpenModalOnLoad]);
   useEffect(() => {
     if (player1Id && player2Id) {
-      const p1 = players.find(p => p.id === parseInt(player1Id));
-      const p2 = players.find(p => p.id === parseInt(player2Id));
-      if (p1 && p2) {
-        setPointsToWin(getRaceToPoints(p1.rating, p2.rating));
-      }
+      const p1 = players.find(p => p.id === player1Id);
+      const p2 = players.find(p => p.id === player2Id);
+      if (p1 && p2) setPointsToWin(getRaceToPoints(p1.rating, p2.rating));
     } else {
       setPointsToWin(null);
     }
@@ -50,24 +64,69 @@ const Matches: React.FC<MatchesProps> = ({ isAdmin, players, teams, matches, sta
     return matches.filter(match => {
         if (gameTypeFilter === 'all') return true;
         return match.gameType === gameTypeFilter;
-    });
+    }).sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
   }, [matches, gameTypeFilter]);
 
-  const handleStartMatch = () => {
-    if (!player1Id || !player2Id || !pointsToWin) {
-      setFormError('Both players must be selected.');
-      return;
+
+  const handleStartMatch = async () => {
+    if (!player1Id || !player2Id || !pointsToWin) {
+      setFormError('Both players must be selected.');
+      return;
+    }
+    
+    try {
+      const player1 = players.find(p => p.id === player1Id);
+      const player2 = players.find(p => p.id === player2Id);
+
+      if (!player1 || !player2) {
+        setFormError('Player data could not be found.');
+        return;
+      }
+
+      // FIX: Add team1Id and team2Id to the new match data object
+      const newMatchData = {
+        player1Id: player1Id,
+        player2Id: player2Id,
+        team1Id: player1.teamId, // <-- FIX: Use the selected player's teamId
+        team2Id: player2.teamId, // <-- FIX: Use the selected player's teamId
+        player1Name: player1.name,
+        player2Name: player2.name,
+        gameType: gameType,
+        pointsToWin1: pointsToWin[0],
+        pointsToWin2: pointsToWin[1],
+        tournament: "League Match",
+        table: "Main Table",
+        status: 'ongoing',
+        createdAt: serverTimestamp(),
+        score1: 0,
+        score2: 0,
+        games: [],
+      };
+
+      const docRef = await addDoc(collection(db, "matches"), newMatchData);
+      
+      // FIX: Pass only the new document's ID to the onMatchStarted handler
+      onMatchStarted(docRef.id);
+      
+      closeModal();
+    } catch (error) {
+      console.error("Error starting new match:", error);
+      setFormError("Could not start match. Please try again.");
+    }
+  };
+
+  // ... (rest of the component is the same)
+  const handleDeleteMatch = async (e: React.MouseEvent, matchId: string) => {
+    e.stopPropagation();
+    if (window.confirm("Are you sure you want to delete this match record permanently?")) {
+      try {
+        await deleteDoc(doc(db, "matches", matchId));
+        fetchData();
+      } catch (error) {
+        console.error("Error deleting match: ", error);
+        alert("Failed to delete match.");
+      }
     }
-    startNewMatch({
-        player1Id: parseInt(player1Id),
-        player2Id: parseInt(player2Id),
-        gameType,
-        pointsToWin1: pointsToWin[0],
-        pointsToWin2: pointsToWin[1],
-        tournament: "League Match",
-        table: "Main Table"
-    });
-    setShowSetupModal(false);
   };
 
   const closeModal = () => {
@@ -78,6 +137,10 @@ const Matches: React.FC<MatchesProps> = ({ isAdmin, players, teams, matches, sta
     setPlayer2Id('');
     setFormError('');
   };
+
+  if (loading) {
+    return <div className="text-center p-10 font-semibold text-gray-500">Loading Matches...</div>;
+  }
 
   return (
     <>
@@ -107,14 +170,24 @@ const Matches: React.FC<MatchesProps> = ({ isAdmin, players, teams, matches, sta
         ) : (
             <div className="space-y-4">
                 {filteredMatches.map(match => (
-                    <div key={match.id} className="p-4 border rounded-lg flex items-center justify-between">
+                    <div key={match.id} className="p-4 border rounded-lg flex items-center justify-between hover:bg-gray-50">
                         <div>
-                            <p className="font-bold">{match.player1} vs {match.player2}</p>
-                            <p className="text-sm text-gray-500">{match.tournament} - {match.date}</p>
+                            <p className="font-bold">{match.player1Name} vs {match.player2Name}</p>
+                            <p className="text-sm text-gray-500">{match.tournament} - {new Date(match.createdAt?.toDate()).toLocaleDateString()}</p>
                         </div>
-                        <div className="text-right">
-                            <p className="font-bold text-lg text-primary">{match.score}</p>
-                            <p className="text-xs text-gray-400 flex items-center gap-1 justify-end"><CheckCircle className="w-3 h-3 text-green-500"/>Completed</p>
+                        <div className="flex items-center gap-4">
+                            <div className="text-right">
+                                <p className="font-bold text-lg text-primary">{match.score1} - {match.score2}</p>
+                                <p className={`text-xs capitalize flex items-center gap-1 justify-end ${match.status === 'completed' ? 'text-green-600' : 'text-yellow-600'}`}>
+                                    <CheckCircle className="w-3 h-3"/>
+                                    {match.status}
+                                </p>
+                            </div>
+                            {isAdmin && (
+                                <button onClick={(e) => handleDeleteMatch(e, match.id)} className="p-2 text-gray-400 hover:text-red-500 rounded-full transition-colors">
+                                    <Trash2 className="w-5 h-5" />
+                                </button>
+                            )}
                         </div>
                     </div>
                 ))}
@@ -149,7 +222,7 @@ const Matches: React.FC<MatchesProps> = ({ isAdmin, players, teams, matches, sta
                         <label className="block text-sm font-medium text-gray-700">Player 1</label>
                         <select value={player1Id} onChange={e => setPlayer1Id(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" disabled={!team1Id}>
                             <option value="">Select Player</option>
-                            {players.filter(p => p.teamId === parseInt(team1Id)).map(player => <option key={player.id} value={player.id}>{player.name} ({player.rating})</option>)}
+                            {players.filter(p => p.teamId === team1Id).map(player => <option key={player.id} value={player.id}>{player.name} ({player.rating})</option>)}
                         </select>
                     </div>
                     <div className="space-y-2 p-4 border rounded-lg">
@@ -161,7 +234,7 @@ const Matches: React.FC<MatchesProps> = ({ isAdmin, players, teams, matches, sta
                         <label className="block text-sm font-medium text-gray-700">Player 2</label>
                         <select value={player2Id} onChange={e => setPlayer2Id(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" disabled={!team2Id}>
                             <option value="">Select Player</option>
-                            {players.filter(p => p.teamId === parseInt(team2Id)).map(player => <option key={player.id} value={player.id}>{player.name} ({player.rating})</option>)}
+                            {players.filter(p => p.teamId === team2Id).map(player => <option key={player.id} value={player.id}>{player.name} ({player.rating})</option>)}
                         </select>
                     </div>
                 </div>
@@ -171,12 +244,12 @@ const Matches: React.FC<MatchesProps> = ({ isAdmin, players, teams, matches, sta
                         <p className="font-bold text-xl">Points Needed to Win</p>
                         <div className="flex justify-around items-center mt-2">
                             <div className="w-1/2 text-center">
-                                <p className="text-lg truncate font-medium">{players.find(p => p.id === parseInt(player1Id))?.name || 'Player 1'}</p>
+                                <p className="text-lg truncate font-medium">{players.find(p => p.id === player1Id)?.name || 'Player 1'}</p>
                                 <p className="text-3xl font-bold">{pointsToWin[0]}</p>
                             </div>
                             <p className="text-2xl font-light text-gray-400">vs</p>
                             <div className="w-1/2 text-center">
-                                <p className="text-lg truncate font-medium">{players.find(p => p.id === parseInt(player2Id))?.name || 'Player 2'}</p>
+                                <p className="text-lg truncate font-medium">{players.find(p => p.id === player2Id)?.name || 'Player 2'}</p>
                                 <p className="text-3xl font-bold">{pointsToWin[1]}</p>
                             </div>
                         </div>
@@ -186,8 +259,8 @@ const Matches: React.FC<MatchesProps> = ({ isAdmin, players, teams, matches, sta
                 {formError && <div className="text-red-600 text-sm bg-red-50 p-2 rounded-lg">{formError}</div>}
                 <div className="flex justify-end space-x-3 pt-4">
                     <button onClick={closeModal} className="btn bg-gray-200 hover:bg-gray-300">Cancel</button>
-                    <button onClick={handleStartMatch} className="btn btn-primary flex items-center gap-2" disabled={!pointsToWin}>
-                        <Gamepad2 className="w-5 h-5"/> Start Match
+                    <button onClick={handleStartMatch} className="btn btn-primary" disabled={!pointsToWin}>
+                        Start Match
                     </button>
                 </div>
             </div>
